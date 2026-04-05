@@ -12,7 +12,6 @@
   "type": "commonjs",
   "private": "true",
   "workspaces": [
-    "client",
-    "server"
+    "packages/*"
   ]
 }
