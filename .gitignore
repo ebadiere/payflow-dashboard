@@ -6,6 +6,8 @@ out/
 
 .env
 .env.*
+!packages/api/.env.development
+!packages/api/.env.test
 
 .cache/
 .parcel-cache/
@@ -28,5 +30,3 @@ Thumbs.db
 *.log
 
 .eslintcache
-
-prisma/migrations/
