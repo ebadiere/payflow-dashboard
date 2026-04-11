@@ -1,14 +1,8 @@
 import request from "supertest";
-import app from "../src/app";
+import app from "../src/app.js";
 import { pool, prisma } from "../src/db/prisma.js";
 
 describe("GET /transactions", () => {
-  
-  afterAll(async () => {
-    await prisma.$disconnect();
-    await pool.end();
-  });
-
   it("returns 200 with paginated results", async () => {
     const res = await request(app).get("/transactions?page=1&limit=20");
     expect(res.status).toBe(200);
@@ -58,4 +52,122 @@ describe("GET /transactions", () => {
     const res = await request(app).get("/transactions?limit=101");
     expect(res.status).toBe(400);
   });
+});
+
+describe("GET /transactions/stuck", () => {
+  const testRunTag = `test-stuck-${Date.now()}`;
+  const createdIds: string[] = [];
+
+  beforeAll(async () => {
+    const now = Date.now();
+
+    const achStuck = await prisma.transaction.create({
+      data: {
+        amount: "10.00",
+        currency: "USD",
+        rail: "ACH",
+        sender: testRunTag,
+        recipient: "recipient",
+        status: "PROCESSING",
+        statusHistory: {
+          create: {
+            status: "PROCESSING",
+            createdAt: new Date(now - 4 * 60 * 60 * 1000 - 1000),
+          },
+        },
+      },
+      select: { id: true },
+    });
+    createdIds.push(achStuck.id);
+
+    const wireNotStuck = await prisma.transaction.create({
+      data: {
+        amount: "20.00",
+        currency: "USD",
+        rail: "WIRE",
+        sender: testRunTag,
+        recipient: "recipient",
+        status: "PROCESSING",
+        statusHistory: {
+          create: {
+            status: "PROCESSING",
+            createdAt: new Date(now - 60 * 60 * 1000),
+          },
+        },
+      },
+      select: { id: true },
+    });
+    createdIds.push(wireNotStuck.id);
+
+    const cardStuck = await prisma.transaction.create({
+      data: {
+        amount: "30.00",
+        currency: "USD",
+        rail: "CARD",
+        sender: testRunTag,
+        recipient: "recipient",
+        status: "PROCESSING",
+        statusHistory: {
+          create: {
+            status: "PROCESSING",
+            createdAt: new Date(now - 30 * 60 * 1000 - 1000),
+          },
+        },
+      },
+      select: { id: true },
+    });
+    createdIds.push(cardStuck.id);
+
+    const completedOld = await prisma.transaction.create({
+      data: {
+        amount: "40.00",
+        currency: "USD",
+        rail: "ACH",
+        sender: testRunTag,
+        recipient: "recipient",
+        status: "COMPLETED",
+        statusHistory: {
+          create: {
+            status: "COMPLETED",
+            createdAt: new Date(now - 24 * 60 * 60 * 1000),
+          },
+        },
+      },
+      select: { id: true },
+    });
+    createdIds.push(completedOld.id);
+  });
+
+  afterAll(async () => {
+    await prisma.statusEvent.deleteMany({
+      where: {
+        transaction: {
+          sender: testRunTag,
+        },
+      },
+    });
+    await prisma.transaction.deleteMany({ where: { sender: testRunTag } });
+  });
+
+  it("returns only PROCESSING transactions that are past their SLA by rail", async () => {
+    const res = await request(app).get("/transactions/stuck");
+    expect(res.status).toBe(200);
+
+    const ids = res.body.data.map((t: { id: string }) => t.id);
+
+    expect(ids).toContain(createdIds[0]);
+    expect(ids).toContain(createdIds[2]);
+
+    expect(ids).not.toContain(createdIds[1]);
+    expect(ids).not.toContain(createdIds[3]);
+
+    res.body.data.forEach((t: { status: string }) => {
+      expect(t.status).toBe("PROCESSING");
+    });
+  });
+});
+
+afterAll(async () => {
+  await prisma.$disconnect();
+  await pool.end();
 });

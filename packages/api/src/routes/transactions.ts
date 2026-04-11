@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../db/prisma.js";
+import { isStuck } from "../sla.js";
 
 // transactions.ts
 // Express router for the `/transactions` API.
@@ -9,7 +10,54 @@ import { prisma } from "../db/prisma.js";
 // - Build a Prisma `where` filter object based on validated inputs.
 // - Query Postgres via Prisma to return a paginated list of transactions.
 
+function buildDateRangeFilter(from?: Date, to?: Date) {
+  const filter: { gte?: Date; lte?: Date } = {};
+
+  if (from && Number.isFinite(from.getTime())) {
+    filter.gte = from;
+  }
+
+  if (to && Number.isFinite(to.getTime())) {
+    const toInclusive = new Date(to);
+    toInclusive.setHours(23, 59, 59, 999);
+    filter.lte = toInclusive;
+  }
+
+  return Object.keys(filter).length ? filter : undefined;
+}
+
+const formatDate = (d: Date) => d.toISOString().slice(0, 10);
+
 const router = Router();
+
+router.get("/stuck", async (_req, res) => {
+  const processing = await prisma.transaction.findMany({
+    where: { status: "PROCESSING" },
+    include: {
+      statusHistory: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const stuck = processing.filter((t) => {
+    const lastStatusEvent = t.statusHistory[0];
+    if (!lastStatusEvent) {
+      return false;
+    }
+    return isStuck(t, lastStatusEvent);
+  });
+
+  return res.json({
+    data: stuck.map((t) => ({
+      ...t,
+      createdAt: formatDate(t.createdAt),
+      updatedAt: formatDate(t.updatedAt),
+    })),
+  });
+});
 
 router.get("/", async (req, res) => {
   const pageRaw = req.query.page;
@@ -52,26 +100,9 @@ router.get("/", async (req, res) => {
   const fromDate = typeof fromRaw === "string" ? new Date(fromRaw) : undefined;
   const toDate = typeof toRaw === "string" ? new Date(toRaw) : undefined;
 
-  if (fromDate && Number.isFinite(fromDate.getTime())) {
-    const createdAtFilter =
-      typeof where.createdAt === "object" &&
-      where.createdAt !== null &&
-      !(where.createdAt instanceof Date)
-        ? where.createdAt
-        : {};
-    where.createdAt = { ...createdAtFilter, gte: fromDate };
-  }
-
-  if (toDate && Number.isFinite(toDate.getTime())) {
-    const toInclusive = new Date(toDate);
-    toInclusive.setHours(23, 59, 59, 999);
-    const createdAtFilter =
-      typeof where.createdAt === "object" &&
-      where.createdAt !== null &&
-      !(where.createdAt instanceof Date)
-        ? where.createdAt
-        : {};
-    where.createdAt = { ...createdAtFilter, lte: toInclusive };
+  const createdAtFilter = buildDateRangeFilter(fromDate, toDate);
+  if (createdAtFilter) {
+    where.createdAt = createdAtFilter;
   }
 
   if (typeof minAmountRaw === "string" && minAmountRaw.length > 0) {
@@ -101,8 +132,8 @@ router.get("/", async (req, res) => {
   return res.json({
     data: data.map((t) => ({
       ...t,
-      createdAt: t.createdAt.toISOString().slice(0, 10),
-      updatedAt: t.updatedAt.toISOString().slice(0, 10),
+      createdAt: formatDate(t.createdAt),
+      updatedAt: formatDate(t.updatedAt),
     })),
     total,
     page,
