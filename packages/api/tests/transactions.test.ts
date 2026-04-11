@@ -310,6 +310,70 @@ describe("POST /transactions/:id/retry", () => {
   });
 });
 
+describe("GET /metrics/summary", () => {
+  const testRunTag = `test-metrics-${Date.now()}`;
+
+  beforeAll(async () => {
+    await prisma.statusEvent.deleteMany({});
+    await prisma.transaction.deleteMany({});
+
+    const createTransaction = prisma.transaction.create as unknown as (args: any) => Promise<any>;
+
+    const base = {
+      amount: "1.00",
+      currency: "USD",
+      rail: "ACH",
+      sender: testRunTag,
+      recipient: "recipient",
+    };
+
+    const creates = [
+      ...Array.from({ length: 5 }, () => ({ ...base, status: "COMPLETED" })),
+      ...Array.from({ length: 2 }, () => ({ ...base, status: "FAILED" })),
+      ...Array.from({ length: 1 }, () => ({ ...base, status: "STUCK" })),
+      ...Array.from({ length: 3 }, () => ({ ...base, status: "PENDING" })),
+      ...Array.from({ length: 2 }, () => ({ ...base, status: "PROCESSING" })),
+    ];
+
+    await Promise.all(
+      creates.map((data) =>
+        createTransaction({
+          data: {
+            ...data,
+            statusHistory: { create: { status: data.status } },
+          },
+          select: { id: true },
+        }),
+      ),
+    );
+  });
+
+  afterAll(async () => {
+    await prisma.statusEvent.deleteMany({
+      where: {
+        transaction: {
+          sender: testRunTag,
+        },
+      },
+    });
+    await prisma.transaction.deleteMany({ where: { sender: testRunTag } });
+  });
+
+  it("returns aggregated counts and successRate", async () => {
+    const res = await request(app).get("/metrics/summary");
+    expect(res.status).toBe(200);
+
+    expect(res.body.data.totalCount).toBe(13);
+    expect(res.body.data.completedCount).toBe(5);
+    expect(res.body.data.failedCount).toBe(2);
+    expect(res.body.data.stuckCount).toBe(1);
+    expect(res.body.data.pendingCount).toBe(3);
+    expect(res.body.data.processingCount).toBe(2);
+
+    expect(res.body.data.successRate).toBe(71.43);
+  });
+});
+
 afterAll(async () => {
   await prisma.$disconnect();
   await pool.end();
