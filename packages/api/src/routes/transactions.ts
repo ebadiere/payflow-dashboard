@@ -31,6 +31,8 @@ const formatDate = (d: Date) => d.toISOString().slice(0, 10);
 const router = Router();
 
 router.get("/stuck", async (_req, res) => {
+  // DB interaction (Prisma): fetch all PROCESSING transactions along with their most recent
+  // status event. We need the latest status timestamp to evaluate the SLA threshold.
   const processing = await prisma.transaction.findMany({
     where: { status: "PROCESSING" },
     include: {
@@ -42,6 +44,8 @@ router.get("/stuck", async (_req, res) => {
     orderBy: { createdAt: "desc" },
   });
 
+  // Business logic: filter down to only transactions whose time since last status event exceeds
+  // the SLA window for that transaction's rail type.
   const stuck = processing.filter((t) => {
     const lastStatusEvent = t.statusHistory[0];
     if (!lastStatusEvent) {
@@ -50,12 +54,61 @@ router.get("/stuck", async (_req, res) => {
     return isStuck(t, lastStatusEvent);
   });
 
+  // Response shaping: keep the transaction fields as-is, but format Date objects as YYYY-MM-DD
+  // strings for JSON output.
   return res.json({
     data: stuck.map((t) => ({
       ...t,
       createdAt: formatDate(t.createdAt),
       updatedAt: formatDate(t.updatedAt),
     })),
+  });
+});
+
+router.post("/:id/retry", async (req, res) => {
+  const id = req.params.id;
+
+  // Validations start here: ensure the transaction exists, is retryable (PROCESSING), and has not
+  // exceeded the max retry count.
+
+  const existing = (await prisma.transaction.findUnique({
+    where: { id },
+  })) as unknown as { id: string; status: string; retryCount: number } | null;
+
+  if (!existing) {
+    return res.status(404).json({ error: "Transaction not found" });
+  }
+
+  if (existing.status !== "PROCESSING") {
+    return res.status(400).json({ error: "Transaction is not PROCESSING" });
+  }
+
+  if (existing.retryCount >= 3) {
+    return res.status(400).json({ error: "Max retries exceeded" });
+  }
+
+  const attemptNumber = existing.retryCount + 1;
+
+  // DB interaction (Prisma): atomically increment the retry count and append a new PROCESSING
+  // status event explaining which retry attempt this is.
+  const updated = await (prisma.transaction.update as unknown as (args: any) => Promise<any>)({
+    where: { id },
+    data: {
+      retryCount: { increment: 1 },
+      statusHistory: {
+        create: {
+          status: "PROCESSING",
+          reason: `Retry attempt ${attemptNumber}`,
+        },
+      },
+    },
+  });
+
+  // Response shaping: return the updated transaction with dates formatted for JSON.
+  return res.json({
+    ...updated,
+    createdAt: formatDate(updated.createdAt),
+    updatedAt: formatDate(updated.updatedAt),
   });
 });
 
