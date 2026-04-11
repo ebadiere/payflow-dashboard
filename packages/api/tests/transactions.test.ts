@@ -167,6 +167,149 @@ describe("GET /transactions/stuck", () => {
   });
 });
 
+describe("POST /transactions/:id/retry", () => {
+  const testRunTag = `test-retry-${Date.now()}`;
+  const ids: Record<"r0" | "r1" | "r2" | "r3" | "notProcessing", string> = {
+    r0: "",
+    r1: "",
+    r2: "",
+    r3: "",
+    notProcessing: "",
+  };
+
+  beforeAll(async () => {
+    const base = {
+      currency: "USD",
+      rail: "ACH",
+      sender: testRunTag,
+      recipient: "recipient",
+    };
+
+    const createTransaction = prisma.transaction.create as unknown as (args: any) => Promise<any>;
+
+    const r0 = await createTransaction({
+      data: {
+        ...base,
+        amount: "11.00",
+        status: "PROCESSING",
+        retryCount: 0,
+        statusHistory: { create: { status: "PROCESSING", reason: "initial" } },
+      },
+      select: { id: true },
+    });
+    ids.r0 = r0.id;
+
+    const r1 = await createTransaction({
+      data: {
+        ...base,
+        amount: "12.00",
+        status: "PROCESSING",
+        retryCount: 1,
+        statusHistory: { create: { status: "PROCESSING", reason: "initial" } },
+      },
+      select: { id: true },
+    });
+    ids.r1 = r1.id;
+
+    const r2 = await createTransaction({
+      data: {
+        ...base,
+        amount: "13.00",
+        status: "PROCESSING",
+        retryCount: 2,
+        statusHistory: { create: { status: "PROCESSING", reason: "initial" } },
+      },
+      select: { id: true },
+    });
+    ids.r2 = r2.id;
+
+    const r3 = await createTransaction({
+      data: {
+        ...base,
+        amount: "14.00",
+        status: "PROCESSING",
+        retryCount: 3,
+        statusHistory: { create: { status: "PROCESSING", reason: "initial" } },
+      },
+      select: { id: true },
+    });
+    ids.r3 = r3.id;
+
+    const notProcessing = await createTransaction({
+      data: {
+        ...base,
+        amount: "15.00",
+        status: "COMPLETED",
+        retryCount: 0,
+        statusHistory: { create: { status: "COMPLETED", reason: "done" } },
+      },
+      select: { id: true },
+    });
+    ids.notProcessing = notProcessing.id;
+  });
+
+  afterAll(async () => {
+    await prisma.statusEvent.deleteMany({
+      where: {
+        transaction: {
+          sender: testRunTag,
+        },
+      },
+    });
+    await prisma.transaction.deleteMany({ where: { sender: testRunTag } });
+  });
+
+  it("returns 404 if transaction does not exist", async () => {
+    const res = await request(app).post(
+      "/transactions/00000000-0000-0000-0000-000000000000/retry",
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 if transaction is not PROCESSING", async () => {
+    const res = await request(app).post(`/transactions/${ids.notProcessing}/retry`);
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 if retryCount is already 3", async () => {
+    const res = await request(app).post(`/transactions/${ids.r3}/retry`);
+    expect(res.status).toBe(400);
+  });
+
+  it("increments retryCount and creates a StatusEvent with reason 'Retry attempt N'", async () => {
+    const res0 = await request(app).post(`/transactions/${ids.r0}/retry`);
+    expect(res0.status).toBe(200);
+    expect(res0.body.retryCount).toBe(1);
+
+    const last0 = await prisma.statusEvent.findFirst({
+      where: { transactionId: ids.r0 },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(last0?.status).toBe("PROCESSING");
+    expect(last0?.reason).toBe("Retry attempt 1");
+
+    const res1 = await request(app).post(`/transactions/${ids.r1}/retry`);
+    expect(res1.status).toBe(200);
+    expect(res1.body.retryCount).toBe(2);
+
+    const last1 = await prisma.statusEvent.findFirst({
+      where: { transactionId: ids.r1 },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(last1?.reason).toBe("Retry attempt 2");
+
+    const res2 = await request(app).post(`/transactions/${ids.r2}/retry`);
+    expect(res2.status).toBe(200);
+    expect(res2.body.retryCount).toBe(3);
+
+    const last2 = await prisma.statusEvent.findFirst({
+      where: { transactionId: ids.r2 },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(last2?.reason).toBe("Retry attempt 3");
+  });
+});
+
 afterAll(async () => {
   await prisma.$disconnect();
   await pool.end();
