@@ -13,11 +13,19 @@ type MetricsSummaryResponse = {
   }
 }
 
-function StatCard({ label, value }: { label: string; value: string | number }) {
+function StatCard({
+  label,
+  value,
+  valueClassName,
+}: {
+  label: string
+  value: string | number
+  valueClassName?: string
+}) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="text-sm font-medium text-slate-500">{label}</div>
-      <div className="mt-2 text-2xl font-semibold text-slate-900">{value}</div>
+    <div className="rounded-xl bg-gray-800 px-4 py-4 shadow-sm">
+      <div className="text-sm font-medium text-white">{label}</div>
+      <div className={valueClassName ?? 'mt-2 text-3xl font-bold text-white'}>{value}</div>
     </div>
   )
 }
@@ -31,30 +39,43 @@ export default function MetricsSummary() {
 
   if (isLoading) {
     return (
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="text-sm font-medium text-slate-500">Metrics Summary</div>
-        <div className="mt-2 text-slate-700">Loading…</div>
-      </div>
+      <section className="w-full">
+        <div className="mb-3 flex items-end justify-between">
+          <h2 className="text-xl font-semibold text-white">Metrics Summary</h2>
+          <div className="text-xs text-slate-300">Auto-refreshes every 30s</div>
+        </div>
+        <div className="rounded-xl border border-white/10 bg-gray-800/40 px-4 py-3 text-sm text-slate-200">
+          Loading…
+        </div>
+      </section>
     )
   }
 
   if (isError) {
     return (
-      <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-red-900 shadow-sm">
-        <div className="text-sm font-medium">Metrics Summary</div>
-        <div className="mt-2 text-sm">
+      <section className="w-full">
+        <div className="mb-3 flex items-end justify-between">
+          <h2 className="text-xl font-semibold text-white">Metrics Summary</h2>
+          <div className="text-xs text-slate-300">Auto-refreshes every 30s</div>
+        </div>
+        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-100">
           {error instanceof Error ? error.message : 'Failed to fetch metrics'}
         </div>
-      </div>
+      </section>
     )
   }
 
   if (!data) {
     return (
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="text-sm font-medium text-slate-500">Metrics Summary</div>
-        <div className="mt-2 text-slate-700">No data available.</div>
-      </div>
+      <section className="w-full">
+        <div className="mb-3 flex items-end justify-between">
+          <h2 className="text-xl font-semibold text-white">Metrics Summary</h2>
+          <div className="text-xs text-slate-300">Auto-refreshes every 30s</div>
+        </div>
+        <div className="rounded-xl border border-white/10 bg-gray-800/40 px-4 py-3 text-sm text-slate-200">
+          No data available.
+        </div>
+      </section>
     )
   }
 
@@ -63,18 +84,34 @@ export default function MetricsSummary() {
   return (
     <section className="w-full">
       <div className="mb-3 flex items-end justify-between">
-        <h2 className="text-lg font-semibold text-slate-900">Metrics Summary</h2>
-        <div className="text-xs text-slate-500">Auto-refreshes every 30s</div>
+        <h2 className="text-xl font-semibold text-white">Metrics Summary</h2>
+        <div className="text-xs text-slate-300">Auto-refreshes every 30s</div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Total" value={summary.totalCount} />
-        <StatCard label="Completed" value={summary.completedCount} />
-        <StatCard label="Failed" value={summary.failedCount} />
-        <StatCard label="Stuck" value={summary.stuckCount} />
+        <StatCard
+          label="Completed"
+          value={summary.completedCount}
+          valueClassName="mt-2 text-3xl font-bold text-emerald-300"
+        />
+        <StatCard
+          label="Failed"
+          value={summary.failedCount}
+          valueClassName="mt-2 text-3xl font-bold text-red-300"
+        />
+        <StatCard
+          label="Stuck"
+          value={summary.stuckCount}
+          valueClassName="mt-2 text-3xl font-bold text-amber-300"
+        />
         <StatCard label="Pending" value={summary.pendingCount} />
         <StatCard label="Processing" value={summary.processingCount} />
-        <StatCard label="Success Rate" value={`${summary.successRate.toFixed(2)}%`} />
+        <StatCard
+          label="Success Rate"
+          value={`${summary.successRate.toFixed(2)}%`}
+          valueClassName="mt-2 text-3xl font-bold text-emerald-300"
+        />
       </div>
     </section>
   )

@@ -138,14 +138,6 @@ function railSlaMs(rail: Rail) {
   }
 }
 
-function weightedStatus(): TxStatus {
-  const r = Math.random();
-  if (r < 0.6) return "COMPLETED";
-  if (r < 0.8) return "PENDING";
-  if (r < 0.95) return "STUCK";
-  return "FAILED";
-}
-
 type StatusEventCreate = {
   status: string;
   reason?: string;
