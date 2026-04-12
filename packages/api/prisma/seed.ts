@@ -18,7 +18,7 @@ const prisma = new PrismaClient({ adapter });
 
 type Rail = "ACH" | "WIRE" | "CARD";
 
-type TxStatus = "COMPLETED" | "PENDING" | "STUCK" | "FAILED";
+type TxStatus = "COMPLETED" | "PENDING" | "PROCESSING" | "STUCK" | "FAILED";
 
 const rails: Rail[] = ["ACH", "WIRE", "CARD"];
 
@@ -181,6 +181,12 @@ function buildHistory(params: {
     return events;
   }
 
+  if (finalStatus === "PROCESSING") {
+    const startMin = randInt(1, 20);
+    push(startMin, "PROCESSING", "Processing started");
+    return events;
+  }
+
   if (finalStatus === "COMPLETED") {
     const slaMin = Math.max(10, Math.floor(railSlaMs(rail) / (60 * 1000)));
     const settleMin = randInt(5, Math.max(6, Math.floor(slaMin * 0.8)));
@@ -226,11 +232,13 @@ async function main() {
   const statuses: TxStatus[] = [];
   const completedCount = Math.floor(total * 0.6);
   const pendingCount = Math.floor(total * 0.2);
+  const processingCount = Math.floor(total * 0.05);
   const stuckCount = Math.floor(total * 0.15);
-  const failedCount = total - completedCount - pendingCount - stuckCount;
+  const failedCount = total - completedCount - pendingCount - processingCount - stuckCount;
 
   for (let i = 0; i < completedCount; i++) statuses.push("COMPLETED");
   for (let i = 0; i < pendingCount; i++) statuses.push("PENDING");
+  for (let i = 0; i < processingCount; i++) statuses.push("PROCESSING");
   for (let i = 0; i < stuckCount; i++) statuses.push("STUCK");
   for (let i = 0; i < failedCount; i++) statuses.push("FAILED");
 
@@ -262,6 +270,39 @@ async function main() {
       },
     };
   });
+
+  const forcedStuckProcessingCount = 12;
+  for (let i = 0; i < forcedStuckProcessingCount; i++) {
+    const rail = choice(rails);
+    const sender = sampleName();
+    let recipient = sampleName();
+    if (recipient === sender) recipient = sampleName();
+
+    const amountCents = randomAmountCents(50, 10000);
+
+    const slaMs = railSlaMs(rail);
+    const createdAt = new Date(Date.now() - slaMs - randInt(30, 240) * 60 * 1000);
+
+    txCreates.push({
+      amount: centsToDecimalString(amountCents),
+      currency: choice(currencies),
+      rail,
+      sender,
+      recipient,
+      status: "PROCESSING",
+      createdAt,
+      statusHistory: {
+        create: [
+          { status: "PENDING", reason: "Transaction created", createdAt },
+          {
+            status: "PROCESSING",
+            reason: "Processing started",
+            createdAt: new Date(createdAt.getTime() + 5 * 60 * 1000),
+          },
+        ],
+      },
+    });
+  }
 
   await prisma.statusEvent.deleteMany();
   await prisma.transaction.deleteMany();
